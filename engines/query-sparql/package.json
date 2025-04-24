@@ -244,6 +244,7 @@
     "@comunica/actor-query-result-serialize-stats": "^4.1.0",
     "@comunica/actor-query-result-serialize-table": "^4.1.0",
     "@comunica/actor-query-result-serialize-tree": "^4.1.0",
+    "@comunica/actor-query-source-identify-graphql": "^4.1.0",
     "@comunica/actor-query-source-identify-hypermedia": "^4.1.0",
     "@comunica/actor-query-source-identify-hypermedia-none": "^4.1.0",
     "@comunica/actor-query-source-identify-hypermedia-qpf": "^4.1.0",

@@ -29,3 +29,5 @@ earl.ttl
 componentsjs-error-state.json
 engines/*/components
 packages/*/components
+temp.js
+movie_data.ttl
