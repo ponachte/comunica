@@ -1,17 +1,25 @@
 import { translate, Algebra } from 'sparqlalgebrajs';
 import type { ISparqlJson, IBinding } from 'tree-to-sparqljson';
+import { parse } from 'graphql';
+import type { DocumentNode } from 'graphql';
 
 const TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
-export class Converter {
+export class SparqlQueryConverter {
   public variableMap: Record<string, string>;
   public context: Record<string, string>;
 
-  protected pattern: Algebra.Pattern;
+  public schema: DocumentNode;
 
-  public constructor() {
+  public constructor(schema_source: string) {
     this.variableMap = {};
     this.context = {};
+
+    const schema = parse(schema_source);
+  }
+
+  public convertPattern(pattern: Algebra.Pattern) {
+
   }
 
   public sparqlToGraphql(sparqlQueryString: string): any {
