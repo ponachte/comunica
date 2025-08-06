@@ -1,21 +1,32 @@
 import { translate, Algebra } from 'sparqlalgebrajs';
 import type { ISparqlJson, IBinding } from 'tree-to-sparqljson';
 import { parse } from 'graphql';
-import type { DocumentNode } from 'graphql';
+import { DocumentNode, ObjectTypeDefinitionNode, Kind } from 'graphql';
 
 const TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 export class SparqlQueryConverter {
   public variableMap: Record<string, string>;
   public context: Record<string, string>;
+  public typeMap: Record<string, ObjectTypeDefinitionNode> 
 
   public schema: DocumentNode;
 
   public constructor(schema_source: string) {
     this.variableMap = {};
     this.context = {};
+    this.typeMap = {};
 
     const schema = parse(schema_source);
+    for (const def of schema.definitions) {
+      if (def.kind === Kind.OBJECT_TYPE_DEFINITION) {
+        this.typeMap[def.name.value] = def;
+      }
+    }
+
+    for (const [typeName, typeNode] of Object.entries(this.typeMap)) {
+      console.log(typeName, " -> ", JSON.stringify(typeNode, null, 2));
+    }
   }
 
   public convertPattern(pattern: Algebra.Pattern) {

@@ -7,7 +7,6 @@ export type Resource = Record<string, any>;
 export class AsyncResourceIterator extends BufferedIterator<Resource> {
   private readonly source: string;
   private query: string;
-  private readonly countQuery: string;
   private readonly context: IActionContext;
   private readonly mediatorHttp: MediatorHttp;
   private cursor: string | null = null;
@@ -21,22 +20,17 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
     super({ maxBufferSize: Number.POSITIVE_INFINITY, autoStart: false });
     this.source = source;
     this.query = query;
-    this.countQuery = this._updateQueryWithCursor("", 1);
     this.context = context;
     this.mediatorHttp = mediatorHttp;
 
     this.setProperty('estimated', false);
   }
 
-  public async getCount(): Promise<number> {
-    const countResponse = await this._query(this.countQuery);
-    return countResponse.extensions.pagination[0].totalCount;
-  }
-
   protected override async _read(_count: number, done: () => void): Promise<void> {
     try {
-
       const response = await this._query(this.query);
+
+      console.log(JSON.stringify(response, null, 2));
 
       const resources: Resource[] = response?.data?.Resource ?? [];
       for (const resource of resources) {
@@ -72,11 +66,13 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
       body: JSON.stringify(body),
     };
 
-    return this.mediatorHttp.mediate({
+    const response = await this.mediatorHttp.mediate({
       input: this.source,
       init,
       context: this.context,
-    }).then(res => res.json());
+    });
+
+    return response.json();
   }
 
   private _updateQueryWithCursor(newCursor: string, newPageSize: number | null = null): string {
@@ -92,10 +88,10 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
           }
         }
 
-        paramMap.cursor = "${newCursor}";
+        paramMap.cursor = `"${newCursor}"`;
 
         if (newPageSize) {
-          paramMap.newPageSize = "${newPageSize}";
+          paramMap.newPageSize = `"${newPageSize}"`;
         }
 
         const newParams = Object.entries(paramMap)

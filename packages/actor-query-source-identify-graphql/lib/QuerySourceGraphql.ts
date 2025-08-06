@@ -13,14 +13,13 @@ import type { AsyncIterator } from 'asynciterator';
 import { TransformIterator, wrap } from 'asynciterator';
 import { Algebra, Factory } from 'sparqlalgebrajs';
 import type { Operation, Ask, Update } from 'sparqlalgebrajs/lib/algebra';
-import { SparqlQueryConverter } from './SparqlConverter';
+import { SparqlQueryConverter } from './SparqlQueryConverter';
 import { Resource, AsyncResourceIterator } from './AsyncResourceIterator';
 import { UnionIterator, EmptyIterator } from 'asynciterator';
 import { getVariables } from '@comunica/bus-query-source-identify';
 import { ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 
-const SCHEMA_SOURCE = `
-type Query {
+const SCHEMA_SOURCE = `type Query {
   persons: [foaf_Person!]!
 }
 
@@ -29,8 +28,7 @@ type foaf_Person {
   ex_knows: foaf_Person!
   schema_email: String!
   schema_givenName: String!
-}
-`
+}`
 
 const SCHEMA_CONTEXT = {
   "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
@@ -46,7 +44,7 @@ export class QuerySourceGraphql implements IQuerySource {
 
   private readonly dataFactory: ComunicaDataFactory;
   private readonly BindingsFactory: BindingsFactory;
-  private readonly queryConverter: SparqlQueryConverter = new SparqlQueryConverter(SCHEMA_SOURCE);
+  // private readonly queryConverter: SparqlQueryConverter = new SparqlQueryConverter(SCHEMA_SOURCE);
 
   private readonly mediatorHttp: MediatorHttp;
 
@@ -195,75 +193,6 @@ export class QuerySourceGraphql implements IQuerySource {
     }
 
     return new EmptyIterator();
-  }
-
-  private parseGraphqlResults(result: any, pattern: Algebra.Pattern): any {
-    const sparqljson = {
-      head: { vars: <string[]> []},
-      results: { bindings: <IBinding[]> []},
-    };
-    const subject = pattern.subject;
-    const predicate = pattern.predicate;
-    const object = pattern.object;
-
-    for (const _subj of result.data.Resource) {
-      const binding: IBinding | undefined = {};
-
-      if (subject.termType === 'Variable') {
-        sparqljson.head.vars.push(subject.value);
-        binding[subject.value] = {
-          type: 'uri',
-          value: _subj.id,
-        };
-      }
-
-      if (_subj._relations) {
-        sparqljson.head.vars.push(predicate.value);
-        for (const _pred of _subj._relations) {
-          binding[predicate.value] = {
-            type: 'uri',
-            value: _pred,
-          };
-          sparqljson.results.bindings.push(binding);
-        }
-      } else {
-        for (const _pred of Object.keys(_subj)) {
-          if (_pred === 'id') {
-            continue;
-          }
-
-          if (predicate.termType === 'Variable') {
-            sparqljson.head.vars.push(predicate.value);
-            binding[predicate.value] = {
-              type: 'uri',
-              value: _pred,
-            };
-          }
-
-          for (const _obj of _subj[_pred]) {
-            // Convert rawRDF result to SPARQL result
-            if (object.termType === 'Variable') {
-              sparqljson.head.vars.push(object.value);
-              if (_obj._rawRDF['@id']) {
-                binding[object.value] = {
-                  type: 'uri',
-                  value: _obj._rawRDF['@id'],
-                };
-              } else {
-                binding[object.value] = {
-                  type: 'literal',
-                  value: _obj._rawRDF['@value'],
-                  datatype: _obj._rawRDF['@type'],
-                };
-              }
-            }
-            sparqljson.results.bindings.push(binding);
-          }
-        }
-      }
-    }
-
-    return sparqljson;
   }
 
   private querySource(query: string, context: IActionContext): AsyncResourceIterator {
