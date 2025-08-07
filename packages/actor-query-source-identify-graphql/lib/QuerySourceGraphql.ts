@@ -14,13 +14,14 @@ import { TransformIterator, wrap } from 'asynciterator';
 import { Algebra, Factory } from 'sparqlalgebrajs';
 import type { Operation, Ask, Update } from 'sparqlalgebrajs/lib/algebra';
 import { SparqlQueryConverter } from './SparqlQueryConverter';
-import { Resource, AsyncResourceIterator } from './AsyncResourceIterator';
+import { Resource, AsyncRawResourceIterator, AsyncResourceIterator } from './AsyncResourceIterator';
 import { UnionIterator, EmptyIterator } from 'asynciterator';
 import { getVariables } from '@comunica/bus-query-source-identify';
-import { ResourceToBindingsIterator } from './ResourceToBindingsIterator';
+import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 
 const SCHEMA_SOURCE = `type Query {
   persons: [foaf_Person!]!
+  person(id: ID!): foaf_Person
 }
 
 type foaf_Person {
@@ -44,7 +45,7 @@ export class QuerySourceGraphql implements IQuerySource {
 
   private readonly dataFactory: ComunicaDataFactory;
   private readonly BindingsFactory: BindingsFactory;
-  // private readonly queryConverter: SparqlQueryConverter = new SparqlQueryConverter(SCHEMA_SOURCE);
+  private readonly queryConverter: SparqlQueryConverter;
 
   private readonly mediatorHttp: MediatorHttp;
 
@@ -77,6 +78,12 @@ export class QuerySourceGraphql implements IQuerySource {
         this.dataFactory.variable('o'),
       ],
     };
+
+    this.queryConverter = new SparqlQueryConverter(
+      SCHEMA_SOURCE,
+      SCHEMA_CONTEXT,
+      this.dataFactory,
+    );
   }
 
   public async getSelectorShape(): Promise<FragmentSelectorShape> {
@@ -92,31 +99,37 @@ export class QuerySourceGraphql implements IQuerySource {
       throw new Error(`Attempted to pass pattern operation with variable predicate to QuerySourceGraphql`);
     }
 
-    // Extract triple pattern from operation
-    const pattern = extractPattern(operation);
+    // convert pattern
+    for (const [query, varMap] of this.queryConverter.convertPattern(operation)) {
+      try {
+        const resourceIterator = this.querySource(query, context);
 
-    // Fetch graphql results
-    const resourceIterator = this.fetchGraphqlResults(pattern, context);
+        const bindings: BindingsStream = new TransformIterator(async() => {
+          // Convert graphql result to bindings
+          const bindingsIterator = new ResourceToBindingsIterator(
+            resourceIterator,
+            operation,
+            varMap,
+            this.dataFactory,
+            this.BindingsFactory,
+          );
 
-    const bindings: BindingsStream = new TransformIterator(async() => {
-      // Convert graphql result to bindings
-      const bindingsIterator = new ResourceToBindingsIterator(
-        resourceIterator,
-        pattern,
-        this.dataFactory,
-        this.BindingsFactory,
-      );
+          return bindingsIterator;
+        });
 
-      return bindingsIterator;
-    });
+        bindings.setProperty('metadata', {
+          state: new MetadataValidationState(),
+          cardinality: { type: 'estimate', value: Number.POSITIVE_INFINITY, dataset: this.source },
+          variables: getVariables(operation).map(variable => ({ variable, canBeUndef: false })),
+        });
 
-    bindings.setProperty('metadata', {
-      state: new MetadataValidationState(),
-      cardinality: { type: 'estimate', value: Number.POSITIVE_INFINITY, dataset: this.source },
-      variables: getVariables(pattern).map(variable => ({ variable, canBeUndef: false })),
-    });
+        return bindings;
+      } catch {
+        continue;
+      }
+    }
 
-    return bindings;
+    throw new Error(`No valid query conversion was found`);
   }
 
   private fetchGraphqlResults(pattern: Algebra.Pattern, context: IActionContext): AsyncIterator<Resource> {
@@ -195,7 +208,7 @@ export class QuerySourceGraphql implements IQuerySource {
     return new EmptyIterator();
   }
 
-  private querySource(query: string, context: IActionContext): AsyncResourceIterator {
+  private querySource(query: string, context: IActionContext): AsyncIterator<Resource> {
     return new AsyncResourceIterator(this.source, query, context, this.mediatorHttp);
   }
 
