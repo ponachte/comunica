@@ -191,9 +191,13 @@ class Field {
     query += pred.value + " ";
 
     // object
-    if (obj.termType === "Variable" && this.hasSubField(pred.value, false)) {
-      query += "{ id } ";
-      varMap[obj.value] = `${this.field.name}_${pred.value}`;
+    if (obj.termType === "Variable") {
+      if (this.hasSubField(pred.value, false)) {
+        query += "{ id } ";
+        varMap[obj.value] = `${this.field.name}_${pred.value}_id`;
+      } else {
+        varMap[obj.value] = `${this.field.name}_${pred.value}`;
+      }
     } else if (obj.termType === "NamedNode") {
       query += `(id: "${obj.value}") { id } `;
     } else if (obj.termType === "Literal") {

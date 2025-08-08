@@ -58,21 +58,40 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
 
   protected override async _read(_count: number, done: () => void): Promise<void> {
     try {
-      const response = await this._query(this.query);
+      while (_count > 0) {
+        // Fetch graphql query results
+        const response = await this._query(this.query);
 
-      const resources: Resource[] = flattenResponse(response?.data) ?? [];
-      for (const resource of resources) {
-        this._push(resource);
-      }
+        if (!response) {
+          this.close();
+          break;
+        }
 
-      // TODO: Handle pagination
-      const pagination = response.extensions?.pagination?.[0];
-      if (pagination?.next) {
-        this.cursor = pagination.next;
-        this.query = this._updateQueryWithCursor(this.cursor!);
-      } else {
-        this.cursor = null;
-        this.close();
+        // Extract resources from results
+        const resources: Resource[] = flattenResponse(response.data);
+        for (const resource of resources) {
+          this._push(resource);
+        }
+        _count -= resources.length;
+      
+        // Check if there are more resources available
+        const paginations = response?.extensions?.pagination?.filter((p: any) => p?.next);
+
+        if (!paginations || paginations.length === 0) {
+          this.close();
+          break;
+        }
+
+        // Find the pagination with the deepest path
+        const deepestPagination = paginations.reduce((deepest: any, current: any) => {
+          const currentDepth = current.path.split("/").filter(Boolean).length;
+          const deepestDepth = deepest.path.split("/").filter(Boolean).length;
+          return currentDepth > deepestDepth ? current : deepest;
+        });
+
+        // Update query with cursor
+        this.query = this._updateCursorInQuery(this.query, deepestPagination.path, deepestPagination.next);
+
       }
     } catch (err) {
       this.emit('error', err);
@@ -101,32 +120,110 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
     }).then(response => response.json());
   }
 
-  private _updateQueryWithCursor(newCursor: string, newPageSize: number | null = null): string {
-    return this.query.replace(
-      /(\bResource)(\s*\(([^)]*)\))?\s*\{([^]*)\}/u,
-      (_match, resourceKeyword, _fullParams, innerParams, selectionSet) => {
-        const paramMap: Record<string, string> = {};
+  private _updateCursorInQuery(query: string, path: string, newCursor: string): string {
+    const pathParts = path.replace(/^\/+/, "").split("/"); // ['persons', 'ex_knows', 'schema_givenName']
 
-        if (innerParams?.trim()) {
-          for (const pair of innerParams.split(',')) {
-            const [ key, value ] = pair.split(':').map((s: string) => s.trim());
-            paramMap[key] = value;
+    function insertCursorAtField(source: string, parts: string[], depth = 0): string {
+      const field = parts[0];
+      let index = 0;
+      let openBraces = 0;
+      let inString = false;
+      let output = "";
+
+      while (index < source.length) {
+          const char = source[index];
+
+          // Handle string quotes properly (avoid modifying inside strings)
+          if (char === '"') {
+              inString = !inString;
+              output += char;
+              index++;
+              continue;
           }
-        }
 
-        paramMap.cursor = `"${newCursor}"`;
+          if (!inString && source.slice(index).match(new RegExp(`^\\b${field}\\b`))) {
+              const matchStart = index;
+              const matchEnd = index + field.length;
 
-        if (newPageSize) {
-          paramMap.newPageSize = `"${newPageSize}"`;
-        }
+              // Check for arguments
+              let argsStart = -1;
+              let argsEnd = -1;
+              let bodyStart = -1;
 
-        const newParams = Object.entries(paramMap)
-          .map(([ k, v ]) => `${k}: ${v}`)
-          .join(', ');
+              index = matchEnd;
 
-        return `${resourceKeyword}(${newParams}) {${selectionSet}}`;
-      },
-    );
+              // Skip whitespace
+              while (/\s/.test(source[index])) index++;
+
+              // Check for arguments
+              if (source[index] === "(") {
+                  argsStart = index;
+                  let parenCount = 1;
+                  index++;
+                  while (index < source.length && parenCount > 0) {
+                      if (source[index] === "(") parenCount++;
+                      else if (source[index] === ")") parenCount--;
+                      index++;
+                  }
+                  argsEnd = index;
+              }
+
+              // Skip whitespace
+              while (/\s/.test(source[index])) index++;
+
+              // Check for body
+              if (source[index] === "{") {
+                  bodyStart = index;
+              }
+
+              // We’re at the right depth
+              if (parts.length === 1) {
+                  const originalField = source.slice(matchStart, index);
+                  let updatedField = "";
+
+                  if (argsStart !== -1) {
+                      // Update existing args
+                      const argsStr = source.slice(argsStart + 1, argsEnd - 1)
+                          .split(",")
+                          .map(arg => arg.trim())
+                          .filter(arg => !arg.startsWith("cursor:"));
+                      argsStr.push(`cursor: "${newCursor}"`);
+                      updatedField = `${field}(${argsStr.join(", ")})`;
+                  } else {
+                      // No args, add cursor
+                      updatedField = `${field}(cursor: "${newCursor}")`;
+                  }
+
+                  return source.slice(0, matchStart) + updatedField + source.slice(index);
+              }
+
+              // Recurse into the nested block
+              if (bodyStart !== -1) {
+                  let braceCount = 1;
+                  let bodyEnd = bodyStart + 1;
+                  while (bodyEnd < source.length && braceCount > 0) {
+                      if (source[bodyEnd] === "{") braceCount++;
+                      else if (source[bodyEnd] === "}") braceCount--;
+                      bodyEnd++;
+                  }
+
+                  const before = source.slice(0, bodyStart + 1);
+                  const body = source.slice(bodyStart + 1, bodyEnd - 1);
+                  const after = source.slice(bodyEnd - 1);
+
+                  const newBody = insertCursorAtField(body, parts.slice(1), depth + 1);
+                  return before + newBody + after;
+              }
+          }
+
+          output += char;
+          index++;
+      }
+
+      return source;
+    }
+
+    return insertCursorAtField(query, pathParts);
   }
 }
 

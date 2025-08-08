@@ -41,13 +41,12 @@ export class ResourceToBindingsIterator extends TransformIterator<Resource, RDF.
 
     if (o.termType === 'Variable') {
       // WARNING: value term type is assumed
-      const value = resource[this.varMap[s.value]];
+      const value = resource[this.varMap[o.value]];
       if (/^https?:\/\/.+/.test(value)) {
         binding[o.value] = this.dataFactory.namedNode(value);
       } else {
         binding[o.value] = this.dataFactory.literal(value);
       }
-      
     }
 
     push(this.convertToBindings(binding));
