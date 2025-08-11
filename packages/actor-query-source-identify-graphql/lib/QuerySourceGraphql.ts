@@ -20,15 +20,15 @@ import { getVariables } from '@comunica/bus-query-source-identify';
 import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 
 const SCHEMA_SOURCE = `type Query {
-  persons: [foaf_Person!]!
-  person(id: ID!): foaf_Person
+  persons(cursor: String): [foaf_Person]!
+  person(id: ID!, cursor: String): foaf_Person
 }
 
 type foaf_Person {
-  id: ID!
-  ex_knows: foaf_Person!
-  schema_email: String!
-  schema_givenName: String!
+  id(cursor: String): ID!
+  ex_knows(id: ID, cursor: String): [foaf_Person]!
+  schema_email(cursor: String): String!
+  schema_givenName(cursor: String): String!
 }`
 
 const SCHEMA_CONTEXT = {
@@ -79,11 +79,8 @@ export class QuerySourceGraphql implements IQuerySource {
       ],
     };
 
-    this.queryConverter = new SparqlQueryConverter(
-      SCHEMA_SOURCE,
-      SCHEMA_CONTEXT,
-      this.dataFactory,
-    );
+    this.queryConverter = new SparqlQueryConverter(this.dataFactory);
+    this.queryConverter.setSchema(SCHEMA_CONTEXT, SCHEMA_SOURCE);
   }
 
   public async getSelectorShape(): Promise<FragmentSelectorShape> {
