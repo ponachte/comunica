@@ -97,7 +97,7 @@ export class QuerySourceGraphql implements IQuerySource {
     }
 
     // convert pattern
-    for (const [query, varMap] of this.queryConverter.convertPattern(operation)) {
+    for (const [query, varMap] of this.queryConverter.convertOperation(operation)) {
       try {
         const resourceIterator = this.querySource(query, context);
 
