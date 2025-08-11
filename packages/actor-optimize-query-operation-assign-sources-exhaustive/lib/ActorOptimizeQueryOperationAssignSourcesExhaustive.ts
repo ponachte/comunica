@@ -8,7 +8,7 @@ import { getDataDestinationValue } from '@comunica/bus-rdf-update-quads';
 import { KeysInitQuery, KeysQueryOperation, KeysRdfUpdateQuads } from '@comunica/context-entries';
 import type { IActorTest, TestResult } from '@comunica/core';
 import { passTestVoid } from '@comunica/core';
-import type { ComunicaDataFactory, IDataDestination, IQuerySourceWrapper } from '@comunica/types';
+import type { ComunicaDataFactory, FragmentSelectorShape, IActionContext, IDataDestination, IQuerySourceWrapper } from '@comunica/types';
 import { assignOperationSource, doesShapeAcceptOperation } from '@comunica/utils-query-operation';
 import { Algebra, Factory, Util } from 'sparqlalgebrajs';
 
@@ -29,6 +29,9 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
     const algebraFactory = new Factory(dataFactory);
 
     const sources: IQuerySourceWrapper[] = action.context.get(KeysQueryOperation.querySources) ?? [];
+    const shapes: FragmentSelectorShape[] = await Promise.all(
+      sources.map(source => source.source.getSelectorShape(action.context))
+    );
     if (sources.length === 0) {
       return { operation: action.operation, context: action.context };
     }
@@ -37,8 +40,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
       const destination: IDataDestination | undefined = action.context.get(KeysRdfUpdateQuads.destination);
       if (!destination || sourceWrapper.source.referenceValue === getDataDestinationValue(destination)) {
         try {
-          const shape = await sourceWrapper.source.getSelectorShape(action.context);
-          if (doesShapeAcceptOperation(shape, action.operation)) {
+          if (doesShapeAcceptOperation(shapes[0], action.operation)) {
             return {
               operation: assignOperationSource(action.operation, sourceWrapper),
               context: action.context,
@@ -51,7 +53,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
       }
     }
     return {
-      operation: this.assignExhaustive(algebraFactory, action.operation, sources),
+      operation: this.assignExhaustive(algebraFactory, action.operation, sources, shapes),
       // We only keep queryString in the context if we only have a single source that accepts the full operation.
       // In that case, the queryString can be sent to the source as-is.
       context: action.context
@@ -71,6 +73,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
     algebraFactory: Factory,
     operation: Algebra.Operation,
     sources: IQuerySourceWrapper[],
+    shapes: FragmentSelectorShape[]
   ): Algebra.Operation {
     // eslint-disable-next-line ts/no-this-alias
     const self = this;
@@ -86,6 +89,40 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
           result: factory.createUnion(sources
             .map(source => assignOperationSource(subOperation, source))),
           recurse: false,
+        };
+      },
+      [Algebra.types.BGP](subOperation, factory) {
+        // If the source(s) accept a BGP, calculate this instead simple patterns
+        // Comunica will handle the parent query operations
+        if (sources.length === 1) {
+          if (doesShapeAcceptOperation(shapes[0], subOperation)) {
+            return {
+              result: assignOperationSource(subOperation, sources[0]),
+              recurse: false,
+            };
+          }
+          return {
+            result: subOperation,
+            recurse: true,
+          };
+        }
+
+        // For multiple sources: check if all shapes accept the subOperation
+        const allAccept = shapes.every(shape => doesShapeAcceptOperation(shape, subOperation));
+
+        if (allAccept) {
+          return {
+            result: factory.createUnion(
+              sources.map(source => assignOperationSource(subOperation, source))
+            ),
+            recurse: false,
+          };
+        }
+
+        // If not all accept, return subOperation with recurse true
+        return {
+          result: subOperation,
+          recurse: true,
         };
       },
       [Algebra.types.LINK](subOperation, factory) {
@@ -123,7 +160,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
       [Algebra.types.CONSTRUCT](subOperation, factory) {
         return {
           result: factory.createConstruct(
-            self.assignExhaustive(algebraFactory, subOperation.input, sources),
+            self.assignExhaustive(algebraFactory, subOperation.input, sources, shapes),
             subOperation.template,
           ),
           recurse: false,
@@ -134,7 +171,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
           result: factory.createDeleteInsert(
             subOperation.delete,
             subOperation.insert,
-            subOperation.where ? self.assignExhaustive(algebraFactory, subOperation.where, sources) : undefined,
+            subOperation.where ? self.assignExhaustive(algebraFactory, subOperation.where, sources, shapes) : undefined,
           ),
           recurse: false,
         };

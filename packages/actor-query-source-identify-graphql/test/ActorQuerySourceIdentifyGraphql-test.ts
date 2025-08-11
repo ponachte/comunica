@@ -1,6 +1,7 @@
 import { Bus } from '@comunica/core';
 import { MediatorRace } from '@comunica/mediator-race';
 import { ActorQuerySourceIdentifyGraphql } from '../lib/ActorQuerySourceIdentifyGraphql';
+import { ActorQuerySourceIdentify } from '@comunica/bus-query-source-identify';
 
 describe('ActorQuerySourceIdentifyGraphql', () => {
   let bus: any;
@@ -8,8 +9,8 @@ describe('ActorQuerySourceIdentifyGraphql', () => {
 
   beforeEach(() => {
     bus = new Bus({ name: 'bus' });
-    mediatorHttp = new MediatorRace({ name: 'mediator-http', bus: new Bus({ name: 'bus-http' }) });
-    jest.clearAllMocks();
+    // mediatorHttp = new MediatorRace({ name: 'mediator-http', bus: new Bus({ name: 'bus-http' }) });
+    // jest.clearAllMocks();
   });
 
   describe('The ActorQuerySourceIdentifyGraphql module', () => {
@@ -18,10 +19,10 @@ describe('ActorQuerySourceIdentifyGraphql', () => {
     });
 
     it('should be a ActorQuerySourceIdentifyHypermedia constructor', () => {
-      expect(new (<any> ActorQuerySourceIdentifyGraphql)({
-        bus,
-        mediatorHttp,
-      })).toBeInstanceOf(ActorQuerySourceIdentifyGraphql);
+      expect(new (<any> ActorQuerySourceIdentifyGraphql)({ name: 'actor', bus }))
+        .toBeInstanceOf(ActorQuerySourceIdentifyGraphql);
+      expect(new (<any> ActorQuerySourceIdentifyGraphql)({ name: 'actor', bus }))
+        .toBeInstanceOf(ActorQuerySourceIdentify);
     });
   });
 });

@@ -17,6 +17,7 @@ import { SparqlQueryConverter } from './SparqlQueryConverter';
 import { Resource, AsyncRawResourceIterator, AsyncResourceIterator } from './AsyncResourceIterator';
 import { UnionIterator, EmptyIterator } from 'asynciterator';
 import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
+import { Factory } from 'sparqlalgebrajs';
 
 const SCHEMA_SOURCE = `type Query {
   persons(cursor: String): [foaf_Person]!
@@ -60,14 +61,41 @@ export class QuerySourceGraphql implements IQuerySource {
     this.BindingsFactory = bindingsFactory;
     this.mediatorHttp = mediator;
 
+    const AF = new Factory(<RDF.DataFactory> this.dataFactory);
     this.selectorShape = {
       type: 'disjunction',
       children: [
         {
           type: 'operation',
-          operation: { operationType: 'wildcard' },
+          operation: {
+            operationType: 'type',
+            type: Algebra.types.JOIN
+          }
         },
-      ],
+        {
+          type: 'operation',
+          operation: {
+            operationType: 'type',
+            type: Algebra.types.BGP
+          }
+        },
+        {
+          type: 'operation',
+          operation: {
+            operationType: 'pattern',
+            pattern: AF.createPattern(
+              this.dataFactory.variable('s'),
+              this.dataFactory.variable('p'),
+              this.dataFactory.variable('o'),
+            ),
+          },
+          variablesOptional: [
+            this.dataFactory.variable('s'),
+            this.dataFactory.variable('p'),
+            this.dataFactory.variable('o'),
+          ],
+        }
+      ]
     };
 
     this.queryConverter = new SparqlQueryConverter(this.dataFactory);
@@ -79,6 +107,7 @@ export class QuerySourceGraphql implements IQuerySource {
   }
 
   public queryBindings(operation: Operation, context: IActionContext): BindingsStream {
+    console.log(operation.type);
     const patterns = QuerySourceGraphql.extractPatterns(operation);
     const variables = Util.inScopeVariables(operation);
 
