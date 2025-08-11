@@ -11,12 +11,11 @@ import { MetadataValidationState } from '@comunica/utils-metadata';
 import type * as RDF from '@rdfjs/types';
 import type { AsyncIterator } from 'asynciterator';
 import { TransformIterator, wrap } from 'asynciterator';
-import { Algebra, Factory } from 'sparqlalgebrajs';
+import { Algebra, Util } from 'sparqlalgebrajs';
 import type { Operation, Ask, Update } from 'sparqlalgebrajs/lib/algebra';
 import { SparqlQueryConverter } from './SparqlQueryConverter';
 import { Resource, AsyncRawResourceIterator, AsyncResourceIterator } from './AsyncResourceIterator';
 import { UnionIterator, EmptyIterator } from 'asynciterator';
-import { getVariables } from '@comunica/bus-query-source-identify';
 import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 
 const SCHEMA_SOURCE = `type Query {
@@ -61,21 +60,13 @@ export class QuerySourceGraphql implements IQuerySource {
     this.BindingsFactory = bindingsFactory;
     this.mediatorHttp = mediator;
 
-    const AF = new Factory(<RDF.DataFactory> this.dataFactory);
     this.selectorShape = {
-      type: 'operation',
-      operation: {
-        operationType: 'pattern',
-        pattern: AF.createPattern(
-          this.dataFactory.variable('s'),
-          this.dataFactory.variable('p'),
-          this.dataFactory.variable('o'),
-        ),
-      },
-      variablesOptional: [
-        this.dataFactory.variable('s'),
-        this.dataFactory.variable('p'),
-        this.dataFactory.variable('o'),
+      type: 'disjunction',
+      children: [
+        {
+          type: 'operation',
+          operation: { operationType: 'wildcard' },
+        },
       ],
     };
 
@@ -88,16 +79,11 @@ export class QuerySourceGraphql implements IQuerySource {
   }
 
   public queryBindings(operation: Operation, context: IActionContext): BindingsStream {
-    if (operation.type !== 'pattern') {
-      throw new Error(`Attempted to pass non-pattern operation '${operation.type}' to QuerySourceGraphql`);
-    }
-
-    if (operation.predicate.termType === 'Variable') {
-      throw new Error(`Attempted to pass pattern operation with variable predicate to QuerySourceGraphql`);
-    }
+    const patterns = QuerySourceGraphql.extractPatterns(operation);
+    const variables = Util.inScopeVariables(operation);
 
     // convert pattern
-    for (const [query, varMap] of this.queryConverter.convertOperation(operation)) {
+    for (const [query, varMap] of this.queryConverter.convertOperation(patterns)) {
       try {
         const resourceIterator = this.querySource(query, context);
 
@@ -105,7 +91,7 @@ export class QuerySourceGraphql implements IQuerySource {
           // Convert graphql result to bindings
           const bindingsIterator = new ResourceToBindingsIterator(
             resourceIterator,
-            operation,
+            variables,
             varMap,
             this.dataFactory,
             this.BindingsFactory,
@@ -117,7 +103,8 @@ export class QuerySourceGraphql implements IQuerySource {
         bindings.setProperty('metadata', {
           state: new MetadataValidationState(),
           cardinality: { type: 'estimate', value: Number.POSITIVE_INFINITY, dataset: this.source },
-          variables: getVariables(operation).map(variable => ({ variable, canBeUndef: false })),
+          // canBeUndef always false?
+          variables: variables.map(variable => ({ variable, canBeUndef: false })),
         });
 
         return bindings;
@@ -129,6 +116,37 @@ export class QuerySourceGraphql implements IQuerySource {
     throw new Error(`No valid query conversion was found`);
   }
 
+  private querySource(query: string, context: IActionContext): AsyncIterator<Resource> {
+    return new AsyncResourceIterator(this.source, query, context, this.mediatorHttp);
+  }
+
+  public static extractPatterns(op: Algebra.Operation): Algebra.Pattern[] {
+    switch (op.type) {
+      case Algebra.types.PROJECT:
+        return this.extractPatterns(op.input);
+
+      case Algebra.types.BGP:
+        return op.patterns;
+
+      case Algebra.types.PATTERN:
+        return [op];
+
+      case Algebra.types.JOIN: {
+        const patterns: Algebra.Pattern[] = [];
+
+        for (const child of op.input as Algebra.Operation[]) {
+          patterns.push(...this.extractPatterns(child));
+        }
+
+        return patterns;
+      }
+
+      default:
+        throw new Error(`Unsupported operation type: ${op.type}`);
+    }
+  }
+
+  /*
   private fetchGraphqlResults(pattern: Algebra.Pattern, context: IActionContext): AsyncIterator<Resource> {
     const subject = pattern.subject;
     const predicate = pattern.predicate;
@@ -205,10 +223,6 @@ export class QuerySourceGraphql implements IQuerySource {
     return new EmptyIterator();
   }
 
-  private querySource(query: string, context: IActionContext): AsyncIterator<Resource> {
-    return new AsyncResourceIterator(this.source, query, context, this.mediatorHttp);
-  }
-
   private filterOnObject(resources: AsyncIterator<Resource>, value: any): AsyncIterator<Resource> {
     resources.setProperty('estimated', true);
     return resources.map((resource: any) => {
@@ -235,6 +249,7 @@ export class QuerySourceGraphql implements IQuerySource {
       return newResource;
     });
   }
+    */
 
   public queryQuads(_operation: Operation, _context: IActionContext): AsyncIterator<RDF.Quad> {
     throw new Error('queryQuads is not implemented in QuerySourceGraphql');
@@ -264,25 +279,4 @@ export interface Literal {
   type: 'literal';
   value: string;
   datatype?: string;
-}
-
-export function extractPattern(operation: Algebra.Operation): Algebra.Pattern {
-  switch (operation.type) {
-    case Algebra.types.PROJECT: {
-      return extractPattern(operation.input);
-    }
-    case Algebra.types.BGP: {
-      const patterns = (operation).patterns;
-      if (patterns.length === 1) {
-        return patterns[0];
-      }
-      throw new Error(`More then one pattern present: ${patterns.length}`);
-    }
-    case Algebra.types.PATTERN: {
-      return operation;
-    }
-    default: {
-      throw new Error(`Unsupported operation type: ${operation.type}`);
-    }
-  }
 }

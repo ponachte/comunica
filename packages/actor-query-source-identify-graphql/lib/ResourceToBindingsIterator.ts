@@ -7,20 +7,20 @@ import { ComunicaDataFactory } from '@comunica/types';
 import type { BindingsFactory } from '@comunica/utils-bindings-factory';
 
 export class ResourceToBindingsIterator extends TransformIterator<Resource, RDF.Bindings> {
-  private readonly pattern: Algebra.Pattern;
+  private readonly variables: RDF.Variable[];
   private readonly varMap: Record<string, string>;
   private readonly dataFactory: ComunicaDataFactory;
   private readonly bindingsFactory: BindingsFactory;
 
   public constructor(
     source: AsyncIterator<Resource>,
-    pattern: Algebra.Pattern,
+    variables: RDF.Variable[],
     varMap: Record<string, string>,
     dataFactory: ComunicaDataFactory,
     bindingsFactory: BindingsFactory,
   ) {
     super(source, { autoStart: false });
-    this.pattern = pattern;
+    this.variables = variables;
     this.varMap = varMap;
     this.dataFactory = dataFactory;
     this.bindingsFactory = bindingsFactory;
@@ -31,21 +31,16 @@ export class ResourceToBindingsIterator extends TransformIterator<Resource, RDF.
     done: () => void,
     push: (binding: RDF.Bindings) => void,
   ): void {
-    const s = this.pattern.subject;
-    const o = this.pattern.object;
 
     const binding: Record<string, RDF.Term> = {};
-    if (s.termType === 'Variable') {
-      binding[s.value] = this.dataFactory.namedNode(resource[this.varMap[s.value]]);
-    }
-
-    if (o.termType === 'Variable') {
+    for (const variable of this.variables) {
       // WARNING: value term type is assumed
-      const value = resource[this.varMap[o.value]];
+      const varName = variable.value;
+      const value = resource[this.varMap[varName]];
       if (/^https?:\/\/.+/.test(value)) {
-        binding[o.value] = this.dataFactory.namedNode(value);
+        binding[varName] = this.dataFactory.namedNode(value);
       } else {
-        binding[o.value] = this.dataFactory.literal(value);
+        binding[varName] = this.dataFactory.literal(value);
       }
     }
 

@@ -35,8 +35,7 @@ export class SparqlQueryConverter {
     this.entryFields = Object.values(queryType.getFields()).map(field => new Field(field));
   }
 
-  public convertOperation(operation: Algebra.Operation): [string, Record<string, string>][] {
-    const patterns = extractPatterns(operation);
+  public convertOperation(patterns: Algebra.Pattern[]): [string, Record<string, string>][] {
     const trees = this.PatternsToTrees(patterns);
 
     if (trees.roots.length > 1) {
@@ -55,6 +54,10 @@ export class SparqlQueryConverter {
     const roots: Record<string, TreeNode> = {};
 
     for (const pattern of patterns) {
+      if (pattern.predicate.termType === 'Variable') {
+        throw new Error(`Cannot convert queries with a variable predicate.`);
+      }
+
       const subject = pattern.subject;
       const pred = this.toSchemaNs(pattern.predicate).value;
       const object = pattern.object;
@@ -216,32 +219,6 @@ function filterFields(fields: Field[], node: TreeNode) {
   }
 
   return filtered;
-}
-
-function extractPatterns(operation: Algebra.Operation): Algebra.Pattern[] {
-  switch (operation.type) {
-    case Algebra.types.PROJECT: {
-      return extractPatterns(operation.input);
-    }
-    case Algebra.types.BGP: {
-      return (operation).patterns;
-    }
-    case Algebra.types.PATTERN: {
-      return [ (operation) ];
-    }
-    case Algebra.types.JOIN: {
-      // If it's a JOIN, recursively collect patterns from its children
-      const join = operation;
-      let patterns: Algebra.Pattern[] = [];
-      for (const child of join.input) {
-        patterns = [ ...patterns, ...extractPatterns(child) ];
-      }
-      return patterns;
-    }
-    default: {
-      throw new Error(`Unsupported operation type: ${operation.type}`);
-    }
-  }
 }
 
 interface TreeNode {
