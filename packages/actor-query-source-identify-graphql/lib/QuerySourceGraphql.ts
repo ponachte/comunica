@@ -19,32 +19,16 @@ import { UnionIterator, EmptyIterator } from 'asynciterator';
 import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 import { Factory } from 'sparqlalgebrajs';
 
-const SCHEMA_SOURCE = `type Query {
-  persons(cursor: String): [foaf_Person]!
-  person(id: ID!, cursor: String): foaf_Person
-}
-
-type foaf_Person {
-  id(cursor: String): ID!
-  ex_knows(id: ID, cursor: String): [foaf_Person]!
-  schema_email(cursor: String): String!
-  schema_givenName(cursor: String): String!
-}`
-
-const SCHEMA_CONTEXT = {
-  "kss": "https://kvasir.discover.ilabt.imec.be/vocab#",
-  "ex": "http://example.org/",
-  "foaf": "http://xmlns.com/foaf/0.1/",
-  "schema": "http://schema.org/"
-};
-
 export class QuerySourceGraphql implements IQuerySource {
   protected readonly selectorShape: FragmentSelectorShape;
+  protected readonly schemaSelectorShape: FragmentSelectorShape;
+  protected readonly schemalessSelectorShape: FragmentSelectorShape;
   public referenceValue: string;
   protected readonly source: string;
 
   private readonly dataFactory: ComunicaDataFactory;
   private readonly BindingsFactory: BindingsFactory;
+
   private readonly queryConverter: SparqlQueryConverter;
 
   private readonly mediatorHttp: MediatorHttp;
@@ -54,6 +38,8 @@ export class QuerySourceGraphql implements IQuerySource {
     dataFactory: ComunicaDataFactory,
     bindingsFactory: BindingsFactory,
     mediator: MediatorHttp,
+    schema_source: string | undefined,
+    schema_context: Record<string, string> | undefined,
   ) {
     this.source = source;
     this.referenceValue = source;
@@ -62,7 +48,23 @@ export class QuerySourceGraphql implements IQuerySource {
     this.mediatorHttp = mediator;
 
     const AF = new Factory(<RDF.DataFactory> this.dataFactory);
-    this.selectorShape = {
+    this.schemalessSelectorShape = {
+      type: 'operation',
+      operation: {
+        operationType: 'pattern',
+        pattern: AF.createPattern(
+          this.dataFactory.variable('s'),
+          this.dataFactory.variable('p'),
+          this.dataFactory.variable('o'),
+        ),
+      },
+      variablesOptional: [
+        this.dataFactory.variable('s'),
+        this.dataFactory.variable('p'),
+        this.dataFactory.variable('o'),
+      ],
+    }
+    this.schemaSelectorShape = {
       type: 'disjunction',
       children: [
         {
@@ -79,31 +81,20 @@ export class QuerySourceGraphql implements IQuerySource {
             type: Algebra.types.BGP
           }
         },
-        {
-          type: 'operation',
-          operation: {
-            operationType: 'pattern',
-            pattern: AF.createPattern(
-              this.dataFactory.variable('s'),
-              this.dataFactory.variable('p'),
-              this.dataFactory.variable('o'),
-            ),
-          },
-          variablesOptional: [
-            this.dataFactory.variable('s'),
-            this.dataFactory.variable('p'),
-            this.dataFactory.variable('o'),
-          ],
-        }
+        this.schemalessSelectorShape,        
       ]
     };
 
-    this.queryConverter = new SparqlQueryConverter(this.dataFactory);
-    this.queryConverter.setSchema(SCHEMA_CONTEXT, SCHEMA_SOURCE);
+    if (schema_context && schema_source) {
+      this.queryConverter = new SparqlQueryConverter(this.dataFactory, schema_context, schema_source);
+      this.selectorShape = this.schemaSelectorShape;
+    } else {
+      this.selectorShape =  this.schemalessSelectorShape;
+    }
   }
 
   public async getSelectorShape(): Promise<FragmentSelectorShape> {
-    return this.selectorShape;
+    return this.schemaSelectorShape;
   }
 
   public queryBindings(operation: Operation, context: IActionContext): BindingsStream {

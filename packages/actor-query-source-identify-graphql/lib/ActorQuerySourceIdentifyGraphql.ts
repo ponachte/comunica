@@ -6,7 +6,7 @@ import type {
   IActorQuerySourceIdentifyArgs,
 } from '@comunica/bus-query-source-identify';
 import { ActorQuerySourceIdentify } from '@comunica/bus-query-source-identify';
-import { KeysInitQuery } from '@comunica/context-entries';
+import { KeysGraphQLSource, KeysInitQuery } from '@comunica/context-entries';
 import type { TestResult, IActorTest } from '@comunica/core';
 import { failTest, passTestVoid, ActionContext } from '@comunica/core';
 import type { ComunicaDataFactory } from '@comunica/types';
@@ -33,6 +33,8 @@ export class ActorQuerySourceIdentifyGraphql extends ActorQuerySourceIdentify {
   }
 
   public async run(action: IActionQuerySourceIdentify): Promise<IActorQuerySourceIdentifyOutput> {
+    const schema = action.querySourceUnidentified.context?.get(KeysGraphQLSource.schema);
+    const schema_context = action.querySourceUnidentified.context?.get(KeysGraphQLSource.context);
     const dataFactory: ComunicaDataFactory = action.context.getSafe(KeysInitQuery.dataFactory);
     return {
       querySource: {
@@ -41,6 +43,8 @@ export class ActorQuerySourceIdentifyGraphql extends ActorQuerySourceIdentify {
           dataFactory,
           await BindingsFactory.create(this.mediatorMergeBindingsContext, action.context, dataFactory),
           this.mediatorHttp,
+          schema,
+          schema_context
         ),
         context: action.querySourceUnidentified.context ?? new ActionContext(),
       },
