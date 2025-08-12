@@ -107,7 +107,6 @@ export class QuerySourceGraphql implements IQuerySource {
   }
 
   public queryBindings(operation: Operation, context: IActionContext): BindingsStream {
-    console.log(operation.type);
     const patterns = QuerySourceGraphql.extractPatterns(operation);
     const variables = Util.inScopeVariables(operation);
 
