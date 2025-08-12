@@ -20,11 +20,8 @@ export class SparqlQueryConverter {
   private context: Record<string, string>;
   private entryFields: Field[];
 
-  public constructor(factory: ComunicaDataFactory) {
+  public constructor(factory: ComunicaDataFactory, context: Record<string, string>, schema_source: string) {
     this.dataFactory = factory;
-  }
-
-  public setSchema(context: Record<string, string>, schema_source: string) {
     this.context = context;
 
     // Get entryfields

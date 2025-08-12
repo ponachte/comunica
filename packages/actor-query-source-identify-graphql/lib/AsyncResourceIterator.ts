@@ -41,7 +41,6 @@ export class AsyncResourceIterator extends BufferedIterator<Resource> {
   private query: string;
   private readonly context: IActionContext;
   private readonly mediatorHttp: MediatorHttp;
-  private cursor: string | null = null;
 
   public constructor(
     source: string,
