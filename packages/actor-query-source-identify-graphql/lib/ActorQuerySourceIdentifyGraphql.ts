@@ -44,7 +44,7 @@ export class ActorQuerySourceIdentifyGraphql extends ActorQuerySourceIdentify {
           await BindingsFactory.create(this.mediatorMergeBindingsContext, action.context, dataFactory),
           this.mediatorHttp,
           schema,
-          schema_context
+          schema_context,
         ),
         context: action.querySourceUnidentified.context ?? new ActionContext(),
       },

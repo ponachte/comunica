@@ -367,4 +367,4 @@ export const KeysGraphQLSource = {
    * The LD-context for that source
    */
   context: new ActionContextKey<Record<string, string>>('@comunica/actor-query-source-identify-graphql:context'),
-}
+};

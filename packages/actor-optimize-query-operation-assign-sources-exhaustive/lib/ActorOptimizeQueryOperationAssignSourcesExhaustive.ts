@@ -8,7 +8,12 @@ import { getDataDestinationValue } from '@comunica/bus-rdf-update-quads';
 import { KeysInitQuery, KeysQueryOperation, KeysRdfUpdateQuads } from '@comunica/context-entries';
 import type { IActorTest, TestResult } from '@comunica/core';
 import { passTestVoid } from '@comunica/core';
-import type { ComunicaDataFactory, FragmentSelectorShape, IActionContext, IDataDestination, IQuerySourceWrapper } from '@comunica/types';
+import type {
+  ComunicaDataFactory,
+  FragmentSelectorShape,
+  IDataDestination,
+  IQuerySourceWrapper,
+} from '@comunica/types';
 import { assignOperationSource, doesShapeAcceptOperation } from '@comunica/utils-query-operation';
 import { Algebra, Factory, Util } from 'sparqlalgebrajs';
 
@@ -30,7 +35,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
 
     const sources: IQuerySourceWrapper[] = action.context.get(KeysQueryOperation.querySources) ?? [];
     const shapes: FragmentSelectorShape[] = await Promise.all(
-      sources.map(source => source.source.getSelectorShape(action.context))
+      sources.map(source => source.source.getSelectorShape(action.context)),
     );
     if (sources.length === 0) {
       return { operation: action.operation, context: action.context };
@@ -73,7 +78,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
     algebraFactory: Factory,
     operation: Algebra.Operation,
     sources: IQuerySourceWrapper[],
-    shapes: FragmentSelectorShape[]
+    shapes: FragmentSelectorShape[],
   ): Algebra.Operation {
     // eslint-disable-next-line ts/no-this-alias
     const self = this;
@@ -92,7 +97,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
         };
       },
       [Algebra.types.BGP](subOperation, factory) {
-        // If the source(s) accept a BGP, calculate this instead simple patterns
+        // If the source(s) accept a BGP, calculate this instead of single patterns
         // Comunica will handle the parent query operations
         if (sources.length === 1) {
           if (doesShapeAcceptOperation(shapes[0], subOperation)) {
@@ -113,7 +118,7 @@ export class ActorOptimizeQueryOperationAssignSourcesExhaustive extends ActorOpt
         if (allAccept) {
           return {
             result: factory.createUnion(
-              sources.map(source => assignOperationSource(subOperation, source))
+              sources.map(source => assignOperationSource(subOperation, source)),
             ),
             recurse: false,
           };

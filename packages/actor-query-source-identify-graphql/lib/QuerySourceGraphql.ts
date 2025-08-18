@@ -10,28 +10,32 @@ import type { BindingsFactory } from '@comunica/utils-bindings-factory';
 import { MetadataValidationState } from '@comunica/utils-metadata';
 import type * as RDF from '@rdfjs/types';
 import type { AsyncIterator } from 'asynciterator';
-import { TransformIterator, wrap } from 'asynciterator';
-import { Algebra, Util } from 'sparqlalgebrajs';
+import { TransformIterator, EmptyIterator } from 'asynciterator';
+import { Algebra, Util, Factory } from 'sparqlalgebrajs';
 import type { Operation, Ask, Update } from 'sparqlalgebrajs/lib/algebra';
+import type { Resource } from './AsyncResourceIterator';
+import { AsyncResourceIterator } from './AsyncResourceIterator';
+import { ResourceToBindingsIterator } from './ResourceToBindingsIterator';
 import { SparqlQueryConverter } from './SparqlQueryConverter';
-import { Resource, AsyncRawResourceIterator, AsyncResourceIterator } from './AsyncResourceIterator';
-import { UnionIterator, EmptyIterator } from 'asynciterator';
-import { RawResourceToBindingsIterator, ResourceToBindingsIterator } from './ResourceToBindingsIterator';
-import { Factory } from 'sparqlalgebrajs';
 
 export class QuerySourceGraphql implements IQuerySource {
   protected readonly selectorShape: FragmentSelectorShape;
   protected readonly schemaSelectorShape: FragmentSelectorShape;
-  protected readonly schemalessSelectorShape: FragmentSelectorShape;
+  protected readonly tripleSelectorShape: FragmentSelectorShape;
   public referenceValue: string;
   protected readonly source: string;
 
   private readonly dataFactory: ComunicaDataFactory;
   private readonly BindingsFactory: BindingsFactory;
 
-  private readonly queryConverter: SparqlQueryConverter;
-
+  private readonly queryConverter: SparqlQueryConverter | undefined;
   private readonly mediatorHttp: MediatorHttp;
+
+  // New: store the chosen conversion method
+  private readonly queryConversion: (
+    op: Operation,
+    ctx: IActionContext,
+  ) => [AsyncIterator<Resource>, Record<string, string>];
 
   public constructor(
     source: string,
@@ -48,7 +52,7 @@ export class QuerySourceGraphql implements IQuerySource {
     this.mediatorHttp = mediator;
 
     const AF = new Factory(<RDF.DataFactory> this.dataFactory);
-    this.schemalessSelectorShape = {
+    this.tripleSelectorShape = {
       type: 'operation',
       operation: {
         operationType: 'pattern',
@@ -63,7 +67,7 @@ export class QuerySourceGraphql implements IQuerySource {
         this.dataFactory.variable('p'),
         this.dataFactory.variable('o'),
       ],
-    }
+    };
     this.schemaSelectorShape = {
       type: 'disjunction',
       children: [
@@ -71,206 +75,184 @@ export class QuerySourceGraphql implements IQuerySource {
           type: 'operation',
           operation: {
             operationType: 'type',
-            type: Algebra.types.JOIN
-          }
+            type: Algebra.types.JOIN,
+          },
         },
         {
           type: 'operation',
           operation: {
             operationType: 'type',
-            type: Algebra.types.BGP
-          }
+            type: Algebra.types.BGP,
+          },
         },
-        this.schemalessSelectorShape,        
-      ]
+        this.tripleSelectorShape,
+      ],
     };
 
+    // Decide schema or schemaless once
     if (schema_context && schema_source) {
-      this.queryConverter = new SparqlQueryConverter(this.dataFactory, schema_context, schema_source);
+      this.queryConverter = new SparqlQueryConverter(
+        this.dataFactory,
+        schema_context,
+        schema_source,
+      );
       this.selectorShape = this.schemaSelectorShape;
+      this.queryConversion = this.schemaQueryConversion.bind(this);
     } else {
-      this.selectorShape =  this.schemalessSelectorShape;
+      this.selectorShape = this.tripleSelectorShape;
+      this.queryConversion = this.schemalessQueryConversion.bind(this);
     }
   }
 
   public async getSelectorShape(): Promise<FragmentSelectorShape> {
-    return this.schemaSelectorShape;
+    return this.selectorShape;
   }
 
   public queryBindings(operation: Operation, context: IActionContext): BindingsStream {
-    const patterns = QuerySourceGraphql.extractPatterns(operation);
     const variables = Util.inScopeVariables(operation);
 
-    // convert pattern
-    for (const [query, varMap] of this.queryConverter.convertOperation(patterns)) {
+    // Call pre-selected conversion function
+    const [ resourceIterator, varMap ] = this.queryConversion(operation, context);
+
+    const bindings: BindingsStream = new TransformIterator(async() => {
+      const bindingsIterator = new ResourceToBindingsIterator(
+        resourceIterator,
+        variables,
+        varMap,
+        this.dataFactory,
+        this.BindingsFactory,
+      );
+
+      return bindingsIterator;
+    });
+
+    bindings.setProperty('metadata', {
+      state: new MetadataValidationState(),
+      cardinality: {
+        type: 'estimate',
+        value: Number.POSITIVE_INFINITY,
+        dataset: this.source,
+      },
+      variables: variables.map(variable => ({ variable, canBeUndef: false })),
+    });
+
+    return bindings;
+  }
+
+  private schemaQueryConversion(
+    operation: Algebra.Operation,
+    context: IActionContext,
+  ): [AsyncIterator<Resource>, Record<string, string>] {
+    function extractPatterns(op: Algebra.Operation): Algebra.Pattern[] {
+      switch (op.type) {
+        case Algebra.types.PROJECT:
+          return extractPatterns(op.input);
+        case Algebra.types.BGP:
+          return op.patterns;
+        case Algebra.types.PATTERN:
+          return [ op ];
+        case Algebra.types.JOIN: {
+          const patterns: Algebra.Pattern[] = [];
+          for (const child of op.input) {
+            patterns.push(...extractPatterns(child));
+          }
+          return patterns;
+        }
+        default:
+          throw new Error(`Unsupported operation type: ${op.type}`);
+      }
+    }
+
+    const patterns = extractPatterns(operation);
+
+    for (const [ query, varMap ] of this.queryConverter!.convertOperation(patterns)) {
       try {
-        const resourceIterator = this.querySource(query, context);
-
-        const bindings: BindingsStream = new TransformIterator(async() => {
-          // Convert graphql result to bindings
-          const bindingsIterator = new ResourceToBindingsIterator(
-            resourceIterator,
-            variables,
-            varMap,
-            this.dataFactory,
-            this.BindingsFactory,
-          );
-
-          return bindingsIterator;
-        });
-
-        bindings.setProperty('metadata', {
-          state: new MetadataValidationState(),
-          cardinality: { type: 'estimate', value: Number.POSITIVE_INFINITY, dataset: this.source },
-          // canBeUndef always false?
-          variables: variables.map(variable => ({ variable, canBeUndef: false })),
-        });
-
-        return bindings;
+        return [ this.querySource(query, context), varMap ];
       } catch {
         continue;
       }
     }
 
-    throw new Error(`No valid query conversion was found`);
+    return [ new EmptyIterator(), {}];
   }
 
-  private querySource(query: string, context: IActionContext): AsyncIterator<Resource> {
-    return new AsyncResourceIterator(this.source, query, context, this.mediatorHttp);
-  }
-
-  public static extractPatterns(op: Algebra.Operation): Algebra.Pattern[] {
-    switch (op.type) {
-      case Algebra.types.PROJECT:
-        return this.extractPatterns(op.input);
-
-      case Algebra.types.BGP:
-        return op.patterns;
-
-      case Algebra.types.PATTERN:
-        return [op];
-
-      case Algebra.types.JOIN: {
-        const patterns: Algebra.Pattern[] = [];
-
-        for (const child of op.input as Algebra.Operation[]) {
-          patterns.push(...this.extractPatterns(child));
-        }
-
-        return patterns;
-      }
-
-      default:
-        throw new Error(`Unsupported operation type: ${op.type}`);
-    }
-  }
-
-  /*
-  private fetchGraphqlResults(pattern: Algebra.Pattern, context: IActionContext): AsyncIterator<Resource> {
-    const subject = pattern.subject;
-    const predicate = pattern.predicate;
-    const object = pattern.object;
-
-    const root = subject.termType === 'NamedNode' ? 
-      `Resource(id: "${subject.value}") {` :
-      `Resource { id,`;
-
-    if (predicate.termType === 'Variable') {
-      if (object.termType === 'Literal' || object.termType === 'Variable') {
-        // Fetch all possible predicates
-        if (subject.termType === 'NamedNode') {
-          const resources = this.querySource(`Resource(id: "${subject.value}") { _predicates }`, context);
-
-          return new UnionIterator<Resource>(resources.transform({
-            autoStart: false,
-            transform: (resource, done: () => void, push: (i: AsyncIterator<Resource>) => void) => {
-              // Create new queries from predicates
-              for (const pred of resource._predicates) {
-                const query = `${root} _object(predicate: "${pred}") { _rawRDF } }`;
-                const pred_resources = this.querySource(query, context);
-
-                if (object.termType === 'Variable') {
-                  push(this.mapWithPred(pred_resources, pred));
-                } else if (object.termType === 'Literal') {
-                  push(this.mapWithPred(this.filterOnObject(pred_resources, object.value), pred));
-                }
-
-                done();
-              }
-            },
-          }));
-        }
-        if (subject.termType === 'Variable') {
-          const resources = this.querySource(`Resource { id, _predicates }`, context);
-
-          return new UnionIterator<Resource>(resources.transform({
-            autoStart: false,
-            transform: (resource, done: () => void, push: (i: AsyncIterator<Resource>) => void) => {
-              for (const pred of resource._predicates) {
-                const query = `Resource(id: "${resource.id}") { id, _object(predicate: "${pred}") { _rawRDF } }`;
-                const pred_resources = this.querySource(query, context);
-
-                if (object.termType === 'Variable') {
-                  push(this.mapWithPred(pred_resources, pred));
-                } else if (object.termType === 'Literal') {
-                  push(this.mapWithPred(this.filterOnObject(pred_resources, object.value), pred));
-                }
-              }
-              done();
-            },
-          }));
-        }
-      } else if (object.termType === 'NamedNode') {
-        return this.querySource(`${root} _relations(id: "${object.value}") }`, context);
-      }
-    } else if (predicate.termType === 'NamedNode') {
-      if (object.termType === 'NamedNode') {
-        const query = `${root} _object(predicate: "${predicate.value}", id: "${object.value}") { _rawRDF } }`;
-        return this.querySource(query, context);
-      }
-      if (object.termType === 'Literal' || object.termType === 'Variable') {
-        const query = `${root} _object(predicate: "${predicate.value}") { _rawRDF } }`;
-        const resources = this.querySource(query, context);
-
-        if (object.termType === 'Literal') {
-          return this.filterOnObject(resources, object.value);
-        }
-        return resources;
-      }
+  private schemalessQueryConversion(
+    operation: Algebra.Operation,
+    context: IActionContext,
+  ): [AsyncIterator<Resource>, Record<string, string>] {
+    if (operation.type !== 'pattern') {
+      throw new Error(`Attempted to give non-pattern operation ${operation.type} to QuerySourceGraphql`);
     }
 
-    return new EmptyIterator();
+    if (operation.predicate.termType === 'Variable') {
+      throw new Error(`Attempted to give pattern with variable predicate to QuerySourceGraphql`);
+    }
+
+    const varMap: Record<string, string> = {};
+    const subject = operation.subject;
+    const predicate = operation.predicate;
+    const object = operation.object;
+
+    let query = 'Resource';
+    if (subject.termType === 'NamedNode') {
+      query += `(id: "${subject.value}")`;
+    }
+    query += ' { ';
+
+    if (subject.termType === 'Variable') {
+      query += 'id ';
+      varMap[subject.value] = 'Resource_id';
+    }
+
+    if (object.termType === 'NamedNode') {
+      query += `_object(predicate: "${predicate.value}", id: "${object.value}") { _rawRDF } }`;
+      return [ this.querySource(query, context), varMap ];
+    }
+    if (object.termType === 'Literal' || object.termType === 'Variable') {
+      query += `_object(predicate: "${predicate.value}") { _rawRDF } }`;
+      const resources = this.querySource(query, context);
+
+      if (object.termType === 'Literal') {
+        return [
+          resources.filter(r => r['Resource__object__rawRDF_@value'] === object.value),
+          varMap,
+        ];
+      }
+      // Change the rawRDF variable
+      varMap[object.value] = 'obj';
+      return [
+        resources.map((resource) => {
+          const idVal = resource['Resource__object__rawRDF_@id'];
+          const valueVal = resource['Resource__object__rawRDF_@value'];
+
+          return <Resource>{
+            ...resource,
+            obj: idVal ?? valueVal,
+          };
+        }),
+        varMap,
+      ];
+    }
+
+    return [ new EmptyIterator(), varMap ];
   }
 
-  private filterOnObject(resources: AsyncIterator<Resource>, value: any): AsyncIterator<Resource> {
-    resources.setProperty('estimated', true);
-    return resources.map((resource: any) => {
-      const filteredObjects = resource._object.filter(
-        (raw: any) => !raw._rawRDF['@id'] && raw._rawRDF['@value'] === value,
-      );
-
-      return {
-        ...resource,
-        _object: filteredObjects,
-      };
-    // Filter out resources with no objects
-    }).filter((resource: any) => resource._object.length > 0);
+  private querySource(
+    query: string,
+    context: IActionContext,
+  ): AsyncIterator<Resource> {
+    return new AsyncResourceIterator(
+      this.source,
+      query,
+      context,
+      this.mediatorHttp,
+    );
   }
 
-  private mapWithPred(resources: AsyncIterator<Resource>, pred: string): AsyncIterator<Resource> {
-    resources.setProperty('estimated', true);
-    return resources.map((resource: any) => {
-      const newResource = {
-        ...resource,
-        [pred]: resource._object,
-      };
-      delete newResource._object;
-      return newResource;
-    });
-  }
-    */
-
-  public queryQuads(_operation: Operation, _context: IActionContext): AsyncIterator<RDF.Quad> {
+  public queryQuads(
+    _operation: Operation,
+    _context: IActionContext,
+  ): AsyncIterator<RDF.Quad> {
     throw new Error('queryQuads is not implemented in QuerySourceGraphql');
   }
 
@@ -285,17 +267,4 @@ export class QuerySourceGraphql implements IQuerySource {
   public toString(): string {
     return `QuerySourceGraphql(${this.referenceValue})`;
   }
-}
-
-export type IBinding = Record<string, IRI | Literal>;
-
-export interface IRI {
-  type: 'uri';
-  value: string;
-}
-
-export interface Literal {
-  type: 'literal';
-  value: string;
-  datatype?: string;
 }

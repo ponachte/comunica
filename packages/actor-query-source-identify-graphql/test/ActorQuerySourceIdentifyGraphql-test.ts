@@ -1,15 +1,14 @@
-import { Bus } from '@comunica/core';
-import { MediatorRace } from '@comunica/mediator-race';
-import { ActorQuerySourceIdentifyGraphql } from '../lib/ActorQuerySourceIdentifyGraphql';
 import { ActorQuerySourceIdentify } from '@comunica/bus-query-source-identify';
+import { Bus } from '@comunica/core';
+import { ActorQuerySourceIdentifyGraphql } from '../lib/ActorQuerySourceIdentifyGraphql';
 
 describe('ActorQuerySourceIdentifyGraphql', () => {
   let bus: any;
-  let mediatorHttp: any;
+  // Let mediatorHttp: any;
 
   beforeEach(() => {
     bus = new Bus({ name: 'bus' });
-    // mediatorHttp = new MediatorRace({ name: 'mediator-http', bus: new Bus({ name: 'bus-http' }) });
+    // MediatorHttp = new MediatorRace({ name: 'mediator-http', bus: new Bus({ name: 'bus-http' }) });
     // jest.clearAllMocks();
   });
 

@@ -1,5 +1,5 @@
 export * from './ActorQuerySourceIdentifyGraphql';
 export * from './QuerySourceGraphql';
-// export * from './AsyncResourceIterator';
+// Export * from './AsyncResourceIterator';
 // export * from './ResourceToBindingsIterator';
 // export * from './SparqlQueryConverter';
